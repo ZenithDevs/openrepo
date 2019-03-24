@@ -21,14 +21,14 @@
 	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 	SOFTWARE.
 */
-
 class OpenRepo {
-	constructor(key, defaultItems, storageHandler) {
+	constructor(key, options) {
 		this.key = key;
-		this.defaultItems = defaultItems;
-		this.storageHandler = (storageHandler != null) ? storageHandler : localStorage;
+		this.defaultItems = (options != null && options.default != null) ? options.default : [];
+		this.proxy = (options != null && options.proxy != null) ? options.proxy : null;
+		this.storageHandler = (options != null && options.storageHandler != null) ? options.storageHandler : localStorage;
 		if (this.storageHandler.getItem(this.key) === null) {
-	      this.storageHandler.setItem(this.key, (this.defaultItems != null) ? JSON.stringify(this.defaultItems) : JSON.stringify([]));
+	      this.storageHandler.setItem(this.key, JSON.stringify(this.defaultItems));
 	    }
 	}
 	add(url) {
@@ -56,42 +56,57 @@ class OpenRepo {
 		}
 	}
 	reset() {
-		this.storageHandler.removeItem(this.key);
-		if (this.storageHandler.getItem(this.key) === null) {
-	    	this.storageHandler.setItem(this.key, (this.defaultItems != null) ? JSON.stringify(this.defaultItems) : JSON.stringify([]));
-	    }
+    	this.storageHandler.setItem(this.key, JSON.stringify(this.defaultItems));
 	}
 	get(url) {
 		var self = this;
 		return new Promise(function(resolve, reject) {
+			if (self.proxy != null) {
+				url = self.proxy.replace("{{url}}", encodeURI(url));
+			}
 			fetch(url).then(res => res.json()).then(json => {
-		        resolve(self.patch(data));
+		        resolve(self.patch(json));
 			}).catch(err => {
+				console.error(err);
 				reject(err);
 			});
 	  	});
 	}
-	list(fetchAll) {
+	list(options) {
+		if (options != null && options.successHTML == null) {
+			options.successHTML = (repo) => repo;
+		};
+		if (options != null && options.failureHTML == null) {
+			options.failureHTML = (repo) => repo;
+		};
 		var self = this;
-        var repos = JSON.parse(this.storageHandler.getItem(self.key));
+        var repos = JSON.parse(this.storageHandler.getItem(this.key));
 		return (new Promise((resolve, reject) => {
 			var result = [];
 			var loadedRepos = 0;
-            if (repos.length > 0 && fetchAll == true) {
-              	repos.forEach(repo => {
-	                fetch(repo).then(res => res.json()).then(json => {
+            if (repos.length > 0 && options != null && options.fetch == true) {
+              	repos.forEach((repo, index) => {
+              		self.get(repo).then(json => {
+	                	if (options.successHTML != null) {
+	                  		json = options.successHTML(json);
+	                  	}
 	                	result.push(json);
 	                  	loadedRepos++;
 	                  	if (loadedRepos == repos.length) {
 	                  		resolve(result);
 	                  	}
-	                }).catch(err => {
-	                  	console.error(err);
+              		}).catch(err => {
+	                  	if (options.failureHTML != null) {
+		                  	result.push(options.failureHTML({
+	                  			repo: repo,
+	                  			index: index,
+	                  		}));
+	                  	}
 	                  	loadedRepos++;
 	                  	if (loadedRepos == repos.length) {
 	                    	resolve(result);
 	                  	}
-                	});
+              		});
               	});
 			} else {
 	        	resolve(repos);
@@ -106,7 +121,7 @@ class OpenRepo {
 		    	break;
 		    case "object":
 		    	var object = item;
-		    	Object.keys(object).forEach(keys => {
+		    	Object.keys(object).forEach(key => {
 			        object[key] = self.patch(object[key]);
 		    	});
 		      	return object;
